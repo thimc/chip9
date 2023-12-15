@@ -5,7 +5,7 @@
 CHIP-8 emulator for 9front / plan 9
 
 **Note: this project is a work in progress, I have tested it with a
-few ROMs but I cannot garuantee it will work with everything out
+few ROMs but I cannot guarantee it will work with everything out
 there.**
 
 
