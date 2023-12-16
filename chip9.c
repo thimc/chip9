@@ -538,7 +538,6 @@ threadmain(int argc, char* argv[])
 		{ nil, &k,  CHANRCV },
 		{ nil, nil, CHANRCV },
 		{ nil, nil, CHANRCV },
-		{ nil, nil, CHANRCV },
 		{ nil, nil, CHANEND },
 	};
 
@@ -566,7 +565,6 @@ threadmain(int argc, char* argv[])
 	alts[1].c = kctl->c;
 	alts[2].c = mctl->resizec;
 	alts[3].c = chancreate(sizeof(ulong), 0);
-	alts[4].c = chancreate(sizeof(ulong), 0);
 	proccreate(clockproc, alts[3].c, 1024);
 	proccreate(keyboardproc, alts[4].c, 1024);
 
