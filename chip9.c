@@ -171,7 +171,7 @@ drawpixel(Point p, char color)
 
 	draw(emu.screen,
 		Rect((p.x*emu.scale), (p.y*emu.scale), (p.x*emu.scale)+emu.scale, (p.y*emu.scale)+emu.scale),
-		(!color ? display->white : display->black), nil, ZP);
+		(color ? display->white : display->black), nil, ZP);
 }
 
 void
@@ -255,7 +255,7 @@ err(void)
 void
 interpret(void)
 {
-	int i, x, y, px, py;
+	int i, x, y, px, py, row, bit;
 	unsigned int index, tmp, p;
 
 	switch(INST){
@@ -341,7 +341,7 @@ interpret(void)
 			emu.V[X] = tmp;
 			break;
 		case 0x000E: // VX <<= 1 [8XYE]
-			emu.V[CF] = ((emu.V[X] & 128) >> 7);
+			emu.V[CF] = ((emu.V[X] >> 7) & 0x1);
 			emu.V[X] <<= 1;
 			break;
 		}
@@ -361,27 +361,26 @@ interpret(void)
 		return;
 
 	case 0xC000: // VX = rand() & NN [CXNN]
-		//srand(time(nil));
+		srand(time(nil));
 		emu.V[X] = ((rand() % 256) & NN);
 		break;
 
 	case 0xD000: // DRAW [DXYNN]
 		emu.V[CF] = 0;
-		for(y=0; y<N; y++){
-			py = (emu.V[Y]+y)%SCREEN_HEIGHT;
-			for(x=0; x<8; x++){
-				p = emu.memory[emu.I + y];
-				px = (emu.V[X]+x)%SCREEN_WIDTH;
-				if(p & (0x80>>x)){
-					index = px + (py*SCREEN_HEIGHT);
-					if(emu.gfx[index]){
-						emu.V[CF]=1;
-					}
-					emu.gfx[index] ^= emu.gfx[index];
-					drawpixel(Pt(px,py), emu.gfx[index]);
+		for(row=0; row<N; row++){
+			py = (emu.V[Y] + row) % SCREEN_HEIGHT;
+			for(bit=7; bit>=0; bit--){
+				px = (emu.V[X] + (7 - bit)) % SCREEN_WIDTH;
+				p = (emu.memory[emu.I + row] >> bit) & 0x01;
+				index = px + (py * SCREEN_WIDTH);
+				if(p && emu.gfx[index]){
+					emu.V[CF] = 1;
 				}
+				emu.gfx[index] ^= p;
+				drawpixel(Pt(px, py), emu.gfx[index]);
 			}
 		}
+		break;
 
 	case 0xE000:
 		switch(NN){
