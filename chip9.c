@@ -46,6 +46,7 @@ Mousectl *mctl;
 typedef struct emulator Emulator;
 struct emulator {
 	Image *screen;
+	Rectangle r;
 	int stack[STK_SIZE];
 	int keys[NUM_KEYS];
 	char gfx[SCREEN_WIDTH * SCREEN_HEIGHT];
@@ -62,12 +63,17 @@ Emulator emu;
 //	4	5	6	D
 //	7	8	9	E
 //	A	0	B	F
+//
+//	1	2	3	4
+//	Q	W	E	R
+//	A	S	D	F
+//	Z	X	C	V
 
 const char keyset[NUM_KEYS] = {
-	'1', '2', '3', '4',
-	'q', 'w', 'e', 'r',
-	'a', 's', 'd', 'f',
-	'z', 'x', 'c', 'v'
+	'x', '1', '2', '3',
+	'q', 'w', 'e', 'a',
+	's', 'd', 'z', 'c',
+	'4', 'r', 'f', 'v'
 };
 
 const char fontset[FONTSET_SIZE] = {
@@ -134,13 +140,11 @@ resetemu(void)
 	emu.DT = 0;
 	emu.ST = 0;
 	emu.PC = START_ADDR;
-
 	emu.debug = 1;
 	emu.running = 1;
 	emu.scale = MIN(scrw/SCREEN_WIDTH, scrh/SCREEN_HEIGHT);
-	emu.screen = allocimage(display,
-		Rect(0, 0, (emu.scale*SCREEN_WIDTH), (emu.scale*SCREEN_HEIGHT)),
-		RGB24, 1, 0x000000FF);
+	emu.r = Rect(0, 0, (emu.scale*SCREEN_WIDTH), (emu.scale*SCREEN_HEIGHT));
+	emu.screen = allocimage(display, emu.r, RGB24, 1, 0x000000FF);
 }
 
 void
@@ -175,7 +179,8 @@ redraw(void)
 {
 	Rectangle r;
 	Point p;
-	char buf[1024];
+	char buf[1024], b[20];
+	int i;
 
 	draw(screen, screen->r, display->white, nil, ZP);
 
@@ -186,13 +191,29 @@ redraw(void)
 
 	if(emu.debug){
 		p = Pt(scrx+SCREEN_X, scry+font->height);
-		snprint(buf, sizeof buf, "%.10s opcode: 0x%.4X | inst: 0x%.4X | PC: 0x%X (%d)",
-			(!emu.running?"PAUSED":"RUNNING"), OPCODE, INST, emu.PC, emu.PC-START_ADDR);
+		snprint(buf, sizeof buf, "%.10s opcode: 0x%.4X | inst: 0x%.4X | PC: 0x%.4X (%.4d) | I: 0x%.4X (%.4d) | SP: %.4d | DT: %.4d | ST: %.4d",
+			(!emu.running?"PAUSED":"RUNNING"), OPCODE, INST, emu.PC, emu.PC-START_ADDR, emu.I, emu.I, emu.SP, emu.DT, emu.ST);
+		string(screen, p, display->black, ZP, font, buf);
+
+		p.y += font->height;
+		memset(buf, 0, sizeof buf);
+		for(i=0; i<NUM_KEYS; i++){
+			snprint(b, sizeof b, "%X=%d ", i, emu.keys[i]);
+			strcat(buf, b);
+		}
+		string(screen, p, display->black, ZP, font, buf);
+
+		p.y += font->height;
+		memset(buf, 0, sizeof buf);
+		for(i=0; i<NUM_REGS; i++){
+			snprint(b, sizeof b, "V%X=%.3d ", i, emu.V[i]);
+			strcat(buf, b);
+		}
 		string(screen, p, display->black, ZP, font, buf);
 	}
 
 	r = Rect(scrx+SCREEN_X, scry+SCREEN_Y,
-		scrx+SCREEN_X+(SCREEN_WIDTH*emu.scale), scry+SCREEN_Y+(SCREEN_HEIGHT*emu.scale));
+		scrx+SCREEN_X+emu.r.max.x, scry+SCREEN_Y+emu.r.max.y);
 	draw(screen, r,	display->transparent, emu.screen, ZP);
 
 	flushimage(display, 1);
@@ -235,7 +256,7 @@ void
 interpret(void)
 {
 	int i, x, y, px, py;
-	int index, tmp, p;
+	unsigned int index, tmp, p;
 
 	switch(INST){
 	case 0x0000:
@@ -246,11 +267,9 @@ interpret(void)
 			for(y=0; y<SCREEN_HEIGHT; y++){
 				for(x=0; x<SCREEN_WIDTH; x++){
 					emu.gfx[x+(y*SCREEN_HEIGHT)]=0;
-			//		drawpixel(Pt(x,y), 0);
 				}
 			}
-			draw(emu.screen, Rect(0,0,SCREEN_WIDTH*emu.scale,SCREEN_HEIGHT*emu.scale),
-				display->black, nil, ZP);
+			draw(emu.screen, emu.r, display->black, nil, ZP);
 			break;
 		case 0x00EE: // RET [00EE]
 			emu.PC = emu.stack[emu.SP--];
@@ -261,7 +280,6 @@ interpret(void)
 	case 0x1000: // JMP [1NNN]
 		emu.PC = NNN;
 		return;
-
 	case 0x2000: // CALL NNN [2NNN]
 		emu.stack[++emu.SP] = emu.PC;
 		emu.PC = NNN;
@@ -285,7 +303,7 @@ interpret(void)
 	case 0x6000: // VX = NN [6XNN]
 		emu.V[X] = NN;
 		break;
-	case 0x7000: // VX += NN {7XNN]
+	case 0x7000: // VX += NN [7XNN]
 		emu.V[X] += NN;
 		break;
 
@@ -314,7 +332,7 @@ interpret(void)
 			emu.V[X] = tmp;
 			break;
 		case 0x0006: // VX >> 1 [8XY6]
-			emu.V[CF] = emu.V[X] & 1;
+			emu.V[CF] = (emu.V[X] & 1);
 			emu.V[X] >>= 1;
 			break;
 		case 0x0007: // VX >>= 1 [8XY7]
@@ -323,7 +341,7 @@ interpret(void)
 			emu.V[X] = tmp;
 			break;
 		case 0x000E: // VX <<= 1 [8XYE]
-			emu.V[CF] = (emu.V[X] & 128) >> 7;
+			emu.V[CF] = ((emu.V[X] & 128) >> 7);
 			emu.V[X] <<= 1;
 			break;
 		}
@@ -340,11 +358,11 @@ interpret(void)
 
 	case 0xB000: // JMP V0 + NNN [BNNN]
 		emu.PC = NNN + emu.V[0x0];
-		break;
+		return;
 
 	case 0xC000: // VX = rand() & NN [CXNN]
 		//srand(time(nil));
-		emu.V[X] = ((rand() % 255) & NN);
+		emu.V[X] = ((rand() % 256) & NN);
 		break;
 
 	case 0xD000: // DRAW [DXYNN]
@@ -368,13 +386,13 @@ interpret(void)
 	case 0xE000:
 		switch(NN){
 		case 0x009E: // SKIP KEY PRESS [EX9E]
-			if(emu.keys[emu.V[X]]!=0)
+			if(emu.keys[emu.V[X]]==1)
 				emu.PC += 2;
 			break;
 		case 0x00A1: // SKIP KEY RELEASE [EXA1]
-			if(!emu.keys[emu.V[X]]==0)
+			if(emu.keys[emu.V[X]]==0)
 				emu.PC += 2;
-			break;
+			return;
 		}
 		break;
 
@@ -430,30 +448,19 @@ interpret(void)
 
 	}
 
-	if(emu.DT>0){
-		emu.DT--;
-	}
-	if(emu.ST>0){
-		emu.ST--;
-		if(!emu.ST){
-			// TODO: Beep boop!
-		}
-	}
-
-	for(i=0; i<NUM_KEYS; i++){
-		emu.keys[i]=0;
-	}
-
 	emu.PC += 2;
 	if(emu.step){
 		emu.step=0;
 		emu.running=0;
 	}
+
 }
 
 void
 clockproc(void *c)
 {
+	int i;
+
 	threadsetname("clock");
 	for(;;){
 		sleep(EMULATOR_SPEED);
@@ -462,6 +469,18 @@ clockproc(void *c)
 			continue;
 		}
 		interpret();
+		if(emu.DT>0){
+			emu.DT--;
+		}
+		if(emu.ST>0){
+			emu.ST--;
+			if(!emu.ST){
+				// TODO: Beep boop!
+			}
+		}
+		for(i=0; i<NUM_KEYS; i++){
+			emu.keys[i]=0;
+		}
 	}
 }
 
@@ -490,10 +509,11 @@ keyboardproc(void *)
 		case KEY_DEBUG:
 			emu.debug = !emu.debug;
 			break;
-		}
-		for(i=0; i<NUM_KEYS; i++){
-			if(r == keyset[i]){
-				emu.keys[i] = 1;
+		default:
+			for(i=0; i<NUM_KEYS; i++){
+				if(keyset[i]==r){
+					emu.keys[i]=1;
+				}
 			}
 		}
 	}
@@ -502,7 +522,7 @@ keyboardproc(void *)
 void
 usage(void)
 {
-	fprint(2, "usage: %s\n", argv0);
+	fprint(2, "usage: %s rom\n", argv0);
 	threadexitsall("usage");
 }
 
