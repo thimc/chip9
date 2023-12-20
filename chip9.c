@@ -477,9 +477,6 @@ clockproc(void *c)
 				// TODO: Beep boop!
 			}
 		}
-		for(i=0; i<NUM_KEYS; i++){
-			emu.keys[i]=0;
-		}
 	}
 }
 
@@ -508,12 +505,9 @@ keyboardproc(void *)
 		case KEY_DEBUG:
 			emu.debug = !emu.debug;
 			break;
-		default:
-			for(i=0; i<NUM_KEYS; i++){
-				if(keyset[i]==r){
-					emu.keys[i]=1;
-				}
-			}
+		}
+		for(i=0; i<NUM_KEYS; i++){
+			emu.keys[i] = (keyset[i]==r);
 		}
 	}
 }
@@ -565,7 +559,7 @@ threadmain(int argc, char* argv[])
 	alts[2].c = mctl->resizec;
 	alts[3].c = chancreate(sizeof(ulong), 0);
 	proccreate(clockproc, alts[3].c, 1024);
-	proccreate(keyboardproc, alts[4].c, 1024);
+	proccreate(keyboardproc, nil, 1024);
 
 	gray = allocimage(display, Rect(0,0,1,1), RGB24, 1, 0xAAAAAAFF);
 	red = allocimage(display, Rect(0,0,1,1), RGB24, 1, 0xE47674FF);
