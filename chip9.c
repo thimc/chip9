@@ -6,7 +6,7 @@
 #include <mouse.h>
 #include <bio.h>
 
-Image *gray, *red, *green;
+Image *red, *green;
 
 Keyboardctl *kctl;
 Mousectl *mctl;
@@ -25,37 +25,39 @@ Mousectl *mctl;
 #define HEIGHT 600
 #define BORDER_SIZE 6
 
-#define SCREEN_WIDTH 64
+#define SCREEN_WIDTH  64
 #define SCREEN_HEIGHT 32
-#define MEMORY_SIZE 4096
-#define STK_SIZE 16
-#define NUM_REGS 16
-#define NUM_KEYS 16
-#define START_ADDR 0x200
-#define FONTSET_SIZE 80
-#define FONT_ADDR 0x50
+#define MEMORY_SIZE   4096
+#define STK_SIZE      16
+#define NUM_REGS      16
+#define NUM_KEYS      16
+#define START_ADDR    0x200
+#define FONTSET_SIZE  80
+#define FONT_ADDR     0x50
+#define PC_STEP       0x2
+#define CF            0xF
 
 #define SCREEN_X (int)((scrw/2) - (SCREEN_WIDTH*emu.scale)/2) 
 #define SCREEN_Y (int)((scrh/2) - (SCREEN_HEIGHT*emu.scale)/2)
 
-#define KEY_DEBUG 'i'
-#define KEY_STEP  'o'
-#define KEY_PAUSE 'p'
-#define EMULATOR_SPEED 15
+#define KEY_DEBUG      'i'
+#define KEY_STEP       'o'
+#define KEY_PAUSE      'p'
+#define EMULATOR_SPEED 1
 
 typedef struct emulator Emulator;
 struct emulator {
 	Image *screen;
 	Rectangle r;
 	int stack[STK_SIZE];
-	int keys[NUM_KEYS];
+	char keys[NUM_KEYS];
 	char gfx[SCREEN_WIDTH * SCREEN_HEIGHT];
-	unsigned char memory[MEMORY_SIZE];
-	unsigned char V[NUM_REGS];
+	uchar memory[MEMORY_SIZE];
+	uchar V[NUM_REGS];
 
 	int scale, running, debug, step;
-	int DT, ST;
-	unsigned int PC, I, SP;
+	uchar DT, ST;
+	uint PC, I, SP;
 };
 Emulator emu;
 
@@ -95,18 +97,18 @@ const char fontset[FONTSET_SIZE] = {
 	0xF0, 0x80, 0xF0, 0x80, 0x80  // F
 };
 
-#define OPCODE (emu.memory[emu.PC]<<8 | emu.memory[emu.PC+1])
-#define X      (OPCODE & 0x0F00) >> 8
-#define Y      (OPCODE & 0x00F0) >> 4
-#define N      (OPCODE & 0x000F)
-#define NN     (OPCODE & 0x00FF)
-#define NNN    (OPCODE & 0x0FFF)
-#define INST   (OPCODE & 0xF000)
-#define CF     0xF
+#define OPCODE (ushort)(emu.memory[emu.PC]<<8 | emu.memory[emu.PC+1])
+#define X      (uchar)((OPCODE & 0x0F00) >> 8)
+#define Y      (uchar)((OPCODE & 0x00F0) >> 4)
+#define N      (uchar )(OPCODE & 0x000F)
+#define NN     (uchar )(OPCODE & 0x00FF)
+#define NNN    (ushort)(OPCODE & 0x0FFF)
+#define INST   (ushort)(OPCODE & 0xF000)
 
 void resetemu(void);
 void load_rom(char* path);
 void drawpixel(Point p, char color);
+void redraw_debug(void);
 void redraw(void);
 void resize(int x, int y);
 void emouse(Mouse* m);
@@ -175,47 +177,42 @@ drawpixel(Point p, char color)
 }
 
 void
+redraw_debug(void)
+{
+	Point p;
+	char buf[256], b[32];
+	int i;
+
+	p = Pt(scrx+SCREEN_X, scry+font->height);
+
+	snprint(buf, sizeof buf, "%.10s opcode: 0x%.4X | inst: 0x%.4X | PC: 0x%.4X (%.4d)",
+		(!emu.running?"PAUSED":"RUNNING"), OPCODE, INST, emu.PC, emu.PC-START_ADDR);
+	string(screen, p, display->black, ZP, font, buf);
+
+	//  | I: 0x%.4X (%.4d) | SP: %.4d | DT: %.4d | ST: %.4d
+	//  emu.I, emu.I, emu.SP, emu.DT, emu.ST
+
+	p.y += font->height;
+	memset(buf, 0, sizeof buf);
+	for(i=0; i<NUM_REGS; i++){
+		snprint(b, sizeof b, "V%X=%.3d ", i, emu.V[i]);
+		strcat(buf, b);
+	}
+	string(screen, p, display->black, ZP, font, buf);
+}
+
+void
 redraw(void)
 {
 	Rectangle r;
-	Point p;
-	char buf[1024], b[20];
-	int i;
-
-	draw(screen, screen->r, display->white, nil, ZP);
-
-	r = Rect(scrx+SCREEN_X-BORDER_SIZE, scry+SCREEN_Y-BORDER_SIZE,
-			scrx+SCREEN_X+(SCREEN_WIDTH*emu.scale)+BORDER_SIZE, 
-			scry+SCREEN_Y+(SCREEN_HEIGHT*emu.scale)+BORDER_SIZE);
-	border(screen, r, BORDER_SIZE, gray, ZP);
-
-	if(emu.debug){
-		p = Pt(scrx+SCREEN_X, scry+font->height);
-		snprint(buf, sizeof buf, "%.10s opcode: 0x%.4X | inst: 0x%.4X | PC: 0x%.4X (%.4d) | I: 0x%.4X (%.4d) | SP: %.4d | DT: %.4d | ST: %.4d",
-			(!emu.running?"PAUSED":"RUNNING"), OPCODE, INST, emu.PC, emu.PC-START_ADDR, emu.I, emu.I, emu.SP, emu.DT, emu.ST);
-		string(screen, p, display->black, ZP, font, buf);
-
-		p.y += font->height;
-		memset(buf, 0, sizeof buf);
-		for(i=0; i<NUM_KEYS; i++){
-			snprint(b, sizeof b, "%X=%d ", i, emu.keys[i]);
-			strcat(buf, b);
-		}
-		string(screen, p, display->black, ZP, font, buf);
-
-		p.y += font->height;
-		memset(buf, 0, sizeof buf);
-		for(i=0; i<NUM_REGS; i++){
-			snprint(b, sizeof b, "V%X=%.3d ", i, emu.V[i]);
-			strcat(buf, b);
-		}
-		string(screen, p, display->black, ZP, font, buf);
-	}
 
 	r = Rect(scrx+SCREEN_X, scry+SCREEN_Y,
 		scrx+SCREEN_X+emu.r.max.x, scry+SCREEN_Y+emu.r.max.y);
-	draw(screen, r,	display->transparent, emu.screen, ZP);
 
+	draw(screen, screen->r, display->white, nil, ZP);
+	if(emu.debug)
+		redraw_debug();
+	draw(screen, r,	display->transparent, emu.screen, ZP);
 	flushimage(display, 1);
 }
 
@@ -255,14 +252,15 @@ err(void)
 void
 interpret(void)
 {
-	int i, x, y, px, py, row, bit;
-	unsigned int index, tmp, p;
+	short i, x, y, px, py, row, bit;
+	short index, p;
 
 	switch(INST){
 	case 0x0000:
 		switch(NN){
 		case 0x0000: // NOP [0NNN]
 			break;
+
 		case 0x00E0: // CLEAR [00E0]
 			for(y=0; y<SCREEN_HEIGHT; y++){
 				for(x=0; x<SCREEN_WIDTH; x++){
@@ -271,6 +269,7 @@ interpret(void)
 			}
 			draw(emu.screen, emu.r, display->black, nil, ZP);
 			break;
+
 		case 0x00EE: // RET [00EE]
 			emu.PC = emu.stack[emu.SP--];
 			break;
@@ -280,29 +279,31 @@ interpret(void)
 	case 0x1000: // JMP [1NNN]
 		emu.PC = NNN;
 		return;
+
 	case 0x2000: // CALL NNN [2NNN]
 		emu.stack[++emu.SP] = emu.PC;
 		emu.PC = NNN;
 		return;
+
 	case 0x3000: // SKIP VX == NN [3XNN]
-		if(emu.V[X] == NN){
-			emu.PC += 2;
-		}
+		if(emu.V[X] == NN)
+			emu.PC += PC_STEP;
 		break;
+
 	case 0x4000: // SKIP VX != NN [4XNN]
-		if(emu.V[X] != NN){
-			emu.PC += 2;
-		}
+		if(emu.V[X] != NN)
+			emu.PC += PC_STEP;
 		break;
+
 	case 0x5000: // SKIP VX == VY [5XY0]
-		if(emu.V[X] == emu.V[Y]){
-			emu.PC += 2;
-		}
+		if(emu.V[X] == emu.V[Y])
+			emu.PC += PC_STEP;
 		break;
 
 	case 0x6000: // VX = NN [6XNN]
 		emu.V[X] = NN;
 		break;
+
 	case 0x7000: // VX += NN [7XNN]
 		emu.V[X] += NN;
 		break;
@@ -312,44 +313,56 @@ interpret(void)
 		case 0x0000: // VX = VY [8XY0]
 			emu.V[X] = emu.V[Y];
 			break;
+
 		case 0x0001: // VX |= VY [8XY1]
 			emu.V[X] |= emu.V[Y];
+			emu.V[CF]=0;
 			break;
+
 		case 0x0002: // VX &= VY [8XY2]
 			emu.V[X] &= emu.V[Y];
+			emu.V[CF]=0;
 			break;
+
 		case 0x0003: // VX ^= VY [8XY3]
 			emu.V[X] ^= emu.V[Y];
+			emu.V[CF]=0;
 			break;
+
 		case 0x0004: // VX += VY [8XY4]
-			tmp = emu.V[X] + emu.V[Y];
-			emu.V[CF] = (tmp>0xFF);
-			emu.V[X] = tmp;
+			p = emu.V[X] + emu.V[Y];
+			emu.V[X] = p;
+			emu.V[CF] = (p>0xFF);
 			break;
+
 		case 0x0005: // VX -= VY [8XY5]
-			tmp = emu.V[X] - emu.V[Y];
-			emu.V[CF] = (emu.V[X] > emu.V[Y]);
-			emu.V[X] = tmp;
+			p = (emu.V[X] >= emu.V[Y]);
+			emu.V[X] -= emu.V[Y];
+			emu.V[CF] = p;
 			break;
+
 		case 0x0006: // VX >> 1 [8XY6]
-			emu.V[CF] = (emu.V[X] & 1);
+			p = (emu.V[Y] & 1);
 			emu.V[X] >>= 1;
+			emu.V[CF] = p;
 			break;
+
 		case 0x0007: // VX >>= 1 [8XY7]
-			tmp = emu.V[Y] - emu.V[X];
-			emu.V[CF] = (emu.V[Y] > emu.V[X]);
-			emu.V[X] = tmp;
+			emu.V[X] = emu.V[Y] - emu.V[X];
+			emu.V[CF] = (emu.V[Y] >= emu.V[X]);
 			break;
+
 		case 0x000E: // VX <<= 1 [8XYE]
-			emu.V[CF] = ((emu.V[X] >> 7) & 0x1);
+			p = (emu.V[X] >> 7);
 			emu.V[X] <<= 1;
+			emu.V[CF] = p;
 			break;
 		}
 		break;
 
 	case 0x9000: // SKIP VX != VY [9XY0]
 		if(emu.V[X] != emu.V[Y])
-			emu.PC += 2;
+			emu.PC += PC_STEP;
 		break;
 
 	case 0xA000: // I = NNNN [ANNN]
@@ -362,20 +375,18 @@ interpret(void)
 
 	case 0xC000: // VX = rand() & NN [CXNN]
 		srand(time(nil));
-		emu.V[X] = ((rand() % 256) & NN);
+		emu.V[X] = (rand() & NN);
 		break;
 
 	case 0xD000: // DRAW [DXYNN]
-		emu.V[CF] = 0;
+		emu.V[CF]=0;
 		for(row=0; row<N; row++){
 			py = (emu.V[Y] + row) % SCREEN_HEIGHT;
-			for(bit=7; bit>=0; bit--){
+			for(bit=0; bit<8; bit++){
 				px = (emu.V[X] + (7 - bit)) % SCREEN_WIDTH;
 				p = (emu.memory[emu.I + row] >> bit) & 0x01;
 				index = px + (py * SCREEN_WIDTH);
-				if(p && emu.gfx[index]){
-					emu.V[CF] = 1;
-				}
+				emu.V[CF] = (p && emu.gfx[index]);
 				emu.gfx[index] ^= p;
 				drawpixel(Pt(px, py), emu.gfx[index]);
 			}
@@ -386,12 +397,13 @@ interpret(void)
 		switch(NN){
 		case 0x009E: // SKIP KEY PRESS [EX9E]
 			if(emu.keys[emu.V[X]]==1)
-				emu.PC += 2;
+				emu.PC += PC_STEP;
 			break;
+
 		case 0x00A1: // SKIP KEY RELEASE [EXA1]
 			if(emu.keys[emu.V[X]]==0)
-				emu.PC += 2;
-			return;
+				emu.PC += PC_STEP;
+			break;
 		}
 		break;
 
@@ -400,59 +412,61 @@ interpret(void)
 		case 0x0007: // VX = DT [FX07]
 			emu.V[X] = emu.DT;
 			break;
+
 		case 0x000A: // WAIT KEY [FX0A]
-			tmp = -1;
+			bit = -1;
 			for(i=0; i<NUM_KEYS; i++){
 				if(emu.keys[i] != 0){
-					tmp=i;
+					bit=i;
 					break;
 				}
 			}
-			if(tmp != -1){
-				emu.V[X] = tmp;
-			}else{
-				emu.PC -= 2;
-			}	
+			if(bit != -1)
+				emu.V[X] = bit;
+			else
+				emu.PC -= PC_STEP;
 			break;
+
 		case 0x0015: // DT = VX [FX15]
 			emu.DT = emu.V[X];
 			break;
+
 		case 0x0018: // ST = VX [FX18]
 			emu.ST = emu.V[X];
 			break;
+
 		case 0x001E: // I += VX [FX1E]
 			emu.I += emu.V[X];
 			break;
+
 		case 0x0029: // I = FONT [FX29]
 			emu.I = (emu.V[X] * 5) + FONT_ADDR;
 			break;
+
 		case 0x0033: // BCD [FX33]
 			emu.memory[emu.I] = emu.V[X]/100;
 			emu.memory[emu.I+1] = (emu.V[X]/10)%10;
 			emu.memory[emu.I+2] = emu.V[X]%10;
 			break;
+
 		case 0x0055: // STORE V0 - VX [FX55]
-			for(i=0; i<=X; i++){
+			for(i=0; i<=X; i++)
 				emu.memory[emu.I+i] = emu.V[i];
-			}
-			break;
-		case 0x0065: // LOAD V0 - VX [FX65]
-			for(i=0; i<=X; i++){
-				emu.V[i] = emu.memory[emu.I+i];
-			}
 			break;
 
+		case 0x0065: // LOAD V0 - VX [FX65]
+			for(i=0; i<=X; i++)
+				emu.V[i] = emu.memory[emu.I+i];
+			break;
 		}
 		break;
-
 	}
 
-	emu.PC += 2;
+	emu.PC += PC_STEP;
 	if(emu.step){
 		emu.step=0;
 		emu.running=0;
 	}
-
 }
 
 void
@@ -464,19 +478,17 @@ clockproc(void *c)
 	for(;;){
 		sleep(EMULATOR_SPEED);
 		sendul(c, 0);
-		if(emu.PC >= MEMORY_SIZE || (!emu.running&&!emu.step)){
+		if(emu.PC >= MEMORY_SIZE || (!emu.running && !emu.step))
 			continue;
-		}
 		interpret();
-		if(emu.DT>0){
-			emu.DT--;
+		emu.DT -= (emu.DT>0);
+		emu.ST -= (emu.ST>0);
+		if(!emu.ST){
+			// TODO: Beep!
 		}
-		if(emu.ST>0){
-			emu.ST--;
-			if(!emu.ST){
-				// TODO: Beep boop!
-			}
-		}
+
+		for(i=0; i<NUM_KEYS; i++)
+			emu.keys[i]=0;
 	}
 }
 
@@ -506,9 +518,8 @@ keyboardproc(void *)
 			emu.debug = !emu.debug;
 			break;
 		}
-		for(i=0; i<NUM_KEYS; i++){
+		for(i=0; i<NUM_KEYS; i++)
 			emu.keys[i] = (keyset[i]==r);
-		}
 	}
 }
 
@@ -561,7 +572,6 @@ threadmain(int argc, char* argv[])
 	proccreate(clockproc, alts[3].c, 1024);
 	proccreate(keyboardproc, nil, 1024);
 
-	gray = allocimage(display, Rect(0,0,1,1), RGB24, 1, 0xAAAAAAFF);
 	red = allocimage(display, Rect(0,0,1,1), RGB24, 1, 0xE47674FF);
 	green = allocimage(display, Rect(0,0,1,1), RGB24, 1, 0x7DFDA4FF);
 
